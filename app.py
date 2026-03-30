@@ -19,6 +19,12 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+    /* Force black text in all metric cards */
+div[data-testid="stMetric"] label,
+div[data-testid="stMetric"] div[data-testid="stMetricValue"],
+div[data-testid="stMetric"] div[data-testid="stMetricDelta"] {
+    color: #000000 !important;
+}
     .main {
         padding: 0rem 1rem;
     }
@@ -33,9 +39,15 @@ st.markdown(
     h1 {
         color: #1E3A5F;
     }
+    /* Force black text in metric cards */
+    div[data-testid="stMetric"] label,
+    div[data-testid="stMetric"] div[data-testid="stMetricValue"],
+    div[data-testid="stMetric"] div[data-testid="stMetricDelta"] {
+        color: #000000 !important;
+    }
     </style>
-    """
-, unsafe_allow_html=True)
+    """, unsafe_allow_html=True
+)
 
 # Load data
 @st.cache_data
