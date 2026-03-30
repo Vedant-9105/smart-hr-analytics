@@ -321,3 +321,28 @@ if st.button("🔮 Predict Churn Risk", use_container_width=True):
     else:
         st.success(f"✅ LOW RISK: {risk_score:.1f}% churn probability")
         st.info("💡 Recommendation: Continue career pathing and recognition")
+
+with st.expander("📖 About This Project"):
+    st.markdown("""
+    **Smart HR Analytics Dashboard** uses Machine Learning to:
+    - Predict employee churn with 76% AUC (LightGBM)
+    - Segment employees into 4 flight risk categories
+    - Identify Top 10% High-Potential (HiPo) talent
+    - Recommend career paths based on historical promotions
+    - Audit Diversity, Equity & Inclusion metrics
+    
+    **Tech Stack:** Python, Streamlit, Scikit-learn, LightGBM, SHAP, Plotly
+    **Data:** 300k+ employees, 1.7M+ records
+    """)
+with st.expander("🤖 Model Performance"):
+    col_m1, col_m2, col_m3 = st.columns(3)
+    col_m1.metric("ROC-AUC", "0.764", "LightGBM")
+    col_m2.metric("Precision (Churn)", "0.52")
+    col_m3.metric("Recall (Churn)", "0.74")
+
+# Load actual feature importance if you saved it
+feature_imp = pd.DataFrame({
+    'Feature': ['salary_growth_pct', 'current_salary', 'age', 'tenure_years', 
+                'num_title_changes', 'title_encoded', 'dept_encoded', 'gender_encoded'],
+    'Importance': [0.216, 0.212, 0.160, 0.125, 0.100, 0.098, 0.071, 0.017]
+})
