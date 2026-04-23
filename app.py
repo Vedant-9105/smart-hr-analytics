@@ -50,47 +50,35 @@ st.markdown(
 @st.cache_data
 def load_data():
     df = pd.read_csv('hr_analytics_complete_data.csv')
-    # Ensure boolean columns
     if 'is_hipo' in df.columns:
         df['is_hipo'] = df['is_hipo'].astype(bool)
     if 'churn' in df.columns:
         df['churn'] = df['churn'].astype(int)
     return df
 
-# Function to add encoded columns and train model
+# Prepare and train model
 @st.cache_resource
 def prepare_and_train(data):
-    # Make a copy
     df = data.copy()
-    
-    # Encode categorical variables
     gender_encoder = LabelEncoder()
     dept_encoder = LabelEncoder()
     title_encoder = LabelEncoder()
-    
     df['gender_encoded'] = gender_encoder.fit_transform(df['gender'])
     df['dept_encoded'] = dept_encoder.fit_transform(df['dept_name'])
     df['title_encoded'] = title_encoder.fit_transform(df['current_title'])
     
-    # Define features
     feature_cols = ['age', 'tenure_years', 'current_salary', 'num_title_changes',
                     'salary_growth_pct', 'gender_encoded', 'dept_encoded', 'title_encoded']
     numeric_cols = ['age', 'tenure_years', 'current_salary', 'num_title_changes', 'salary_growth_pct']
     
     X = df[feature_cols].copy()
     y = df['churn']
-    
-    # Store medians for numeric columns (used later for imputation)
     medians = X[numeric_cols].median()
-    
-    # Handle missing values (just in case)
     X[numeric_cols] = X[numeric_cols].fillna(medians)
     
-    # Scale numeric features
     scaler = StandardScaler()
     X[numeric_cols] = scaler.fit_transform(X[numeric_cols])
     
-    # Train LightGBM
     model = lgb.LGBMClassifier(
         n_estimators=200,
         learning_rate=0.05,
@@ -101,15 +89,12 @@ def prepare_and_train(data):
     )
     model.fit(X, y)
     
-    # Feature importance
     importance = pd.DataFrame({
         'Feature': feature_cols,
         'Importance': model.feature_importances_
     }).sort_values('Importance', ascending=False)
     
-    # SHAP explainer
     explainer = shap.TreeExplainer(model)
-    
     return model, scaler, medians, importance, explainer, feature_cols, numeric_cols, gender_encoder, dept_encoder, title_encoder
 
 # Load data
@@ -121,10 +106,9 @@ except FileNotFoundError:
     st.stop()
 
 # Train model and get artifacts
-(model, scaler, medians, feature_importance, explainer, feature_cols, numeric_cols,
- gender_encoder, dept_encoder, title_encoder) = prepare_and_train(master)
+model, scaler, medians, feature_importance, explainer, feature_cols, numeric_cols, gender_encoder, dept_encoder, title_encoder = prepare_and_train(master)
 
-# Add encoded columns to master for later use (employee lookup)
+# Add encoded columns to master
 master['gender_encoded'] = gender_encoder.transform(master['gender'])
 master['dept_encoded'] = dept_encoder.transform(master['dept_name'])
 master['title_encoded'] = title_encoder.transform(master['current_title'])
@@ -151,6 +135,11 @@ if selected_risk != 'All':
 if selected_gender != 'All':
     filtered_df = filtered_df[filtered_df['gender'] == selected_gender]
 
+# Check if filtered data is empty
+if len(filtered_df) == 0:
+    st.warning("⚠️ No employees match the selected filters. Please change your filter selections.")
+    st.stop()
+
 # Main title
 st.title("📊 Smart HR Analytics Dashboard")
 st.markdown("*AI-Powered Employee Insights, Churn Prediction, and Talent Management*")
@@ -172,7 +161,7 @@ with col4:
     avg_salary = filtered_df['current_salary'].mean()
     st.metric("💰 Avg Salary", f"${avg_salary:,.0f}")
 with col5:
-    # Compute DEI score from data
+    # Compute DEI score (using full master for stability)
     female_rep = (master['gender'] == 'F').mean() * 100
     male_salary = master[master['gender']=='M']['current_salary'].mean()
     female_salary = master[master['gender']=='F']['current_salary'].mean()
@@ -188,34 +177,49 @@ with col5:
 
 st.markdown("---")
 
-# Row 2: Two columns for charts
+# Row 2: Two charts (DataFrame based)
 col_left, col_right = st.columns(2)
 
 with col_left:
     st.subheader("📈 Churn Rate by Department")
     dept_churn = filtered_df.groupby('dept_name')['churn'].mean().sort_values(ascending=False) * 100
-    fig = px.bar(
-        x=dept_churn.values, y=dept_churn.index, orientation='h',
-        labels={'x': 'Churn Rate (%)', 'y': 'Department'},
-        color=dept_churn.values, color_continuous_scale='Reds',
-        title='Churn Rate by Department'
-    )
-    fig.update_layout(height=400)
-    st.plotly_chart(fig, use_container_width=True)
+    if len(dept_churn) == 0:
+        st.info("No department data for selected filters.")
+    else:
+        dept_churn_df = dept_churn.reset_index()
+        dept_churn_df.columns = ['Department', 'Churn Rate']
+        fig = px.bar(
+            dept_churn_df,
+            x='Churn Rate',
+            y='Department',
+            orientation='h',
+            labels={'Churn Rate': 'Churn Rate (%)', 'Department': 'Department'},
+            color='Churn Rate',
+            color_continuous_scale='Reds',
+            title='Churn Rate by Department'
+        )
+        fig.update_layout(height=400)
+        st.plotly_chart(fig, use_container_width=True)
 
 with col_right:
     st.subheader("🎯 Risk Category Distribution")
-    risk_dist = filtered_df['risk_category'].value_counts()
-    fig = px.pie(
-        values=risk_dist.values, names=risk_dist.index,
-        title='Employee Risk Segmentation',
-        color_discrete_sequence=px.colors.sequential.Greens_r
-    )
-    fig.update_traces(textposition='inside', textinfo='percent+label')
-    fig.update_layout(height=400)
-    st.plotly_chart(fig, use_container_width=True)
+    risk_dist = filtered_df['risk_category'].value_counts().reset_index()
+    risk_dist.columns = ['Risk Category', 'Count']
+    if len(risk_dist) == 0:
+        st.info("No risk category data for selected filters.")
+    else:
+        fig = px.pie(
+            risk_dist,
+            values='Count',
+            names='Risk Category',
+            title='Employee Risk Segmentation',
+            color_discrete_sequence=px.colors.sequential.Greens_r
+        )
+        fig.update_traces(textposition='inside', textinfo='percent+label')
+        fig.update_layout(height=400)
+        st.plotly_chart(fig, use_container_width=True)
 
-# Row 3: Two more columns
+# Row 3
 col_left2, col_right2 = st.columns(2)
 
 with col_left2:
@@ -232,16 +236,20 @@ with col_left2:
 with col_right2:
     st.subheader("📊 Top Churn Drivers (LightGBM)")
     fig = px.bar(
-        feature_importance.head(8), x='Importance', y='Feature', orientation='h',
+        feature_importance.head(8),
+        x='Importance',
+        y='Feature',
+        orientation='h',
         title='Feature Importance from Trained Model',
-        color='Importance', color_continuous_scale='Blues'
+        color='Importance',
+        color_continuous_scale='Blues'
     )
     fig.update_layout(height=400)
     st.plotly_chart(fig, use_container_width=True)
 
 st.markdown("---")
 
-# Employee Lookup Tool with SHAP explanation
+# Employee Lookup Tool
 st.subheader("🔍 Employee Risk & Career Path Lookup")
 col_search1, col_search2 = st.columns([3,1])
 with col_search1:
@@ -264,26 +272,17 @@ if search_clicked or 'last_emp_id' not in st.session_state:
         
         # Prepare features for prediction
         emp_features = emp[feature_cols].copy().to_frame().T
-        
-        # Impute missing numeric values with medians (if any)
         for col in numeric_cols:
             if emp_features[col].isnull().any():
                 emp_features[col] = emp_features[col].fillna(medians[col])
-        
-        # Convert to float to avoid dtype issues
         emp_features = emp_features.astype(float)
-        
-        # Scale numeric features
         emp_features[numeric_cols] = scaler.transform(emp_features[numeric_cols])
-        
-        # Predict churn probability
         prob = model.predict_proba(emp_features)[0, 1]
         col_d.metric("🎯 Churn Probability", f"{prob*100:.1f}%")
         
         st.markdown("#### 📌 Career Recommendation")
         st.info(f"**Recommended Next Role:** {emp['recommended_next_title']}")
         
-        # SHAP explanation for this employee
         with st.expander("🔍 See why this employee is at risk (SHAP explanation)"):
             shap_values = explainer.shap_values(emp_features)
             shap_vals = shap_values[1] if isinstance(shap_values, list) else shap_values
@@ -297,15 +296,15 @@ if search_clicked or 'last_emp_id' not in st.session_state:
             st.plotly_chart(fig_shap, use_container_width=True)
         
         # Radar chart
-        metrics = {
+        metrics_dict = {
             'Tenure': min(100, emp['tenure_years']/30*100),
             'Salary Growth': min(100, emp['salary_growth_pct']/100*100),
             'Promotion Rate': min(100, emp['num_title_changes']/5*100),
             'Age Factor': min(100, emp['age']/65*100)
         }
         fig = go.Figure(data=go.Scatterpolar(
-            r=list(metrics.values()),
-            theta=list(metrics.keys()),
+            r=list(metrics_dict.values()),
+            theta=list(metrics_dict.keys()),
             fill='toself',
             marker=dict(color='#1E3A5F')
         ))
@@ -321,14 +320,17 @@ if search_clicked or 'last_emp_id' not in st.session_state:
 
 st.markdown("---")
 
-# DEI Dashboard (enhanced with actual computed scores)
+# DEI Dashboard
 st.subheader("🌈 Diversity, Equity & Inclusion (DEI) Dashboard")
 dei_col1, dei_col2, dei_col3 = st.columns(3)
 
 with dei_col1:
-    gender_counts = master['gender'].value_counts()
+    gender_counts = master['gender'].value_counts().reset_index()
+    gender_counts.columns = ['Gender', 'Count']
     fig = px.pie(
-        values=gender_counts.values, names=gender_counts.index,
+        gender_counts,
+        values='Count',
+        names='Gender',
         title='Gender Representation',
         color_discrete_sequence=['#3498DB', '#E74C3C']
     )
@@ -337,33 +339,39 @@ with dei_col1:
 with dei_col2:
     salary_gender = master.groupby('gender')['current_salary'].mean().reset_index()
     fig = px.bar(
-        salary_gender, x='gender', y='current_salary',
+        salary_gender,
+        x='gender',
+        y='current_salary',
         title='Average Salary by Gender',
         labels={'current_salary': 'Avg Salary ($)', 'gender': 'Gender'},
-        color='gender', color_discrete_sequence=['#3498DB', '#E74C3C']
+        color='gender',
+        color_discrete_sequence=['#3498DB', '#E74C3C']
     )
     st.plotly_chart(fig, use_container_width=True)
 
 with dei_col3:
-    hipo_gender = master.groupby('gender')['is_hipo'].mean() * 100
+    hipo_gender = master.groupby('gender')['is_hipo'].mean().reset_index()
+    hipo_gender['is_hipo'] = hipo_gender['is_hipo'] * 100
     fig = px.bar(
-        x=hipo_gender.index, y=hipo_gender.values,
+        hipo_gender,
+        x='gender',
+        y='is_hipo',
         title='HiPo Rate by Gender (%)',
-        labels={'x': 'Gender', 'y': 'HiPo Rate (%)'},
-        color=hipo_gender.index, color_discrete_sequence=['#2ECC71', '#F39C12']
+        labels={'gender': 'Gender', 'is_hipo': 'HiPo Rate (%)'},
+        color='gender',
+        color_discrete_sequence=['#2ECC71', '#F39C12']
     )
     st.plotly_chart(fig, use_container_width=True)
 
-# Advanced Analytics Tabs
 st.markdown("---")
+
+# Advanced Analytics Tabs
 st.subheader("📈 Advanced Analytics")
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["Model Performance", "SHAP Global Analysis", "Clustering Insights", "Career Paths", "DEI Scorecard"])
 
 with tab1:
     col_m1, col_m2, col_m3 = st.columns(3)
-    # Compute evaluation metrics on full data
     X_full = master[feature_cols].copy()
-    # Impute missing numeric values with medians (if any)
     X_full[numeric_cols] = X_full[numeric_cols].fillna(medians)
     X_full[numeric_cols] = scaler.transform(X_full[numeric_cols])
     y_pred_proba = model.predict_proba(X_full)[:, 1]
@@ -376,9 +384,11 @@ with tab1:
     col_m3.metric("Recall (Churn)", f"{recall:.2f}")
     st.markdown("**Confusion Matrix (on full data)**")
     cm = confusion_matrix(master['churn'], y_pred)
-    fig_cm = px.imshow(cm, text_auto=True, color_continuous_scale='Blues',
-                       labels=dict(x="Predicted", y="Actual", color="Count"),
-                       x=['Active', 'Churned'], y=['Active', 'Churned'])
+    fig_cm = px.imshow(
+        cm, text_auto=True, color_continuous_scale='Blues',
+        labels=dict(x="Predicted", y="Actual", color="Count"),
+        x=['Active', 'Churned'], y=['Active', 'Churned']
+    )
     st.plotly_chart(fig_cm, use_container_width=True)
 
 with tab2:
@@ -408,22 +418,25 @@ with tab3:
         'Cluster': master['risk_cluster'],
         'Risk Category': master['risk_category']
     })
-    fig = px.scatter(cluster_df, x='PC1', y='PC2', color='Risk Category',
-                     title='Employee Segments (PCA projection)',
-                     color_discrete_sequence=px.colors.qualitative.Set1)
+    fig = px.scatter(
+        cluster_df, x='PC1', y='PC2', color='Risk Category',
+        title='Employee Segments (PCA projection)',
+        color_discrete_sequence=px.colors.qualitative.Set1
+    )
     st.plotly_chart(fig, use_container_width=True)
     
     st.markdown("**Cluster Profiles (mean values)**")
-    cluster_profile = master.groupby('risk_cluster')[['age', 'tenure_years', 'current_salary', 
-                                                      'num_title_changes', 'salary_growth_pct']].mean()
+    cluster_profile = master.groupby('risk_cluster')[['age', 'tenure_years', 'current_salary', 'num_title_changes', 'salary_growth_pct']].mean()
     st.dataframe(cluster_profile.style.format("{:.1f}"))
     
     st.markdown("**Churn Rate by Cluster**")
     cluster_churn = master.groupby('risk_category')['churn'].mean() * 100
-    fig_bar = px.bar(x=cluster_churn.index, y=cluster_churn.values,
-                     labels={'x': 'Risk Category', 'y': 'Churn Rate (%)'},
-                     title='Churn Rate per Risk Segment',
-                     color=cluster_churn.values, color_continuous_scale='Reds')
+    cluster_churn_df = cluster_churn.reset_index()
+    cluster_churn_df.columns = ['Risk Category', 'Churn Rate']
+    fig_bar = px.bar(
+        cluster_churn_df, x='Risk Category', y='Churn Rate',
+        title='Churn Rate per Risk Segment', color='Churn Rate', color_continuous_scale='Reds'
+    )
     st.plotly_chart(fig_bar, use_container_width=True)
 
 with tab4:
@@ -431,21 +444,25 @@ with tab4:
     transitions = master[['current_title', 'recommended_next_title']].dropna()
     trans_counts = transitions.groupby(['current_title', 'recommended_next_title']).size().reset_index(name='count')
     trans_counts = trans_counts.sort_values('count', ascending=False).head(10)
-    fig = px.bar(trans_counts, x='count', y='current_title', color='recommended_next_title',
-                 title='Most Frequent Recommended Title Changes',
-                 labels={'count': 'Number of Employees', 'current_title': 'Current Title'})
+    fig = px.bar(
+        trans_counts, x='count', y='current_title', color='recommended_next_title',
+        title='Most Frequent Recommended Title Changes',
+        labels={'count': 'Number of Employees', 'current_title': 'Current Title'}
+    )
     st.plotly_chart(fig, use_container_width=True)
     
     st.markdown("**HiPo Employees (Top 10%) - Sample**")
-    hipo_sample = master[master['is_hipo']][['emp_no', 'first_name', 'last_name', 'current_title', 
-                                             'recommended_next_title', 'dept_name']].head(10)
+    hipo_sample = master[master['is_hipo']][['emp_no', 'first_name', 'last_name', 'current_title', 'recommended_next_title', 'dept_name']].head(10)
     st.dataframe(hipo_sample)
     
     st.markdown("**Promotion Probability by Current Title**")
     promo_prob = master.groupby('current_title')['num_title_changes'].mean().sort_values(ascending=False).head(10)
-    fig2 = px.bar(x=promo_prob.values, y=promo_prob.index, orientation='h',
-                  labels={'x': 'Avg Number of Promotions', 'y': 'Title'},
-                  title='Titles with Highest Average Promotions')
+    promo_df = promo_prob.reset_index()
+    promo_df.columns = ['Title', 'Avg Promotions']
+    fig2 = px.bar(
+        promo_df, x='Avg Promotions', y='Title', orientation='h',
+        title='Titles with Highest Average Promotions'
+    )
     st.plotly_chart(fig2, use_container_width=True)
 
 with tab5:
@@ -459,20 +476,26 @@ with tab5:
     st.markdown("**Gender Pay Gap by Department**")
     dept_pay_gap = master.groupby(['dept_name', 'gender'])['current_salary'].mean().unstack()
     dept_pay_gap['gap_%'] = (dept_pay_gap['M'] - dept_pay_gap['F']) / dept_pay_gap['M'] * 100
-    fig = px.bar(dept_pay_gap.reset_index(), x='dept_name', y='gap_%',
-                 title='Gender Pay Gap (%) by Department (positive means male higher)',
-                 labels={'dept_name': 'Department', 'gap_%': 'Pay Gap (%)'},
-                 color='gap_%', color_continuous_scale='RdYlGn')
+    dept_gap_df = dept_pay_gap.reset_index()
+    fig = px.bar(
+        dept_gap_df, x='dept_name', y='gap_%',
+        title='Gender Pay Gap (%) by Department (positive means male higher)',
+        labels={'dept_name': 'Department', 'gap_%': 'Pay Gap (%)'},
+        color='gap_%', color_continuous_scale='RdYlGn'
+    )
     st.plotly_chart(fig, use_container_width=True)
     
     st.markdown("**HiPo Rate by Department & Gender**")
     hipo_dept_gender = master.groupby(['dept_name', 'gender'])['is_hipo'].mean().unstack() * 100
-    fig2 = px.bar(hipo_dept_gender.reset_index(), x='dept_name', y=['F', 'M'],
-                  barmode='group', title='HiPo Rate by Department and Gender (%)',
-                  labels={'value': 'HiPo Rate (%)', 'dept_name': 'Department'})
+    hipo_dept_df = hipo_dept_gender.reset_index()
+    fig2 = px.bar(
+        hipo_dept_df, x='dept_name', y=['F', 'M'], barmode='group',
+        title='HiPo Rate by Department and Gender (%)',
+        labels={'value': 'HiPo Rate (%)', 'dept_name': 'Department'}
+    )
     st.plotly_chart(fig2, use_container_width=True)
 
-# Export and Prediction Sections
+# Export Reports
 st.markdown("---")
 st.subheader("📥 Export Reports")
 
@@ -499,6 +522,7 @@ with col_export3:
         hipo_list.to_csv('hipo_list.csv', index=False)
         st.success(f"✅ {len(hipo_list)} HiPo employees exported")
 
+# Real-Time Prediction
 st.markdown("---")
 st.subheader("🤖 Real-Time Churn Prediction (Powered by LightGBM)")
 st.write("Enter employee details to see churn probability and risk drivers")
@@ -520,21 +544,16 @@ with pred_col3:
     pred_title = st.selectbox("Job Title", master['current_title'].dropna().unique())
 
 if st.button("🔮 Predict Churn Risk (ML Model)", use_container_width=True):
-    # Encode categorical inputs
     gender_enc = gender_encoder.transform([pred_gender])[0]
     dept_enc = dept_encoder.transform([pred_dept])[0]
     title_enc = title_encoder.transform([pred_title])[0]
     
-    # Build feature array
     new_data = pd.DataFrame([[
         pred_age, pred_tenure, pred_salary, pred_title_changes, pred_salary_growth,
         gender_enc, dept_enc, title_enc
-    ]], columns=feature_cols)
+    ]], columns=feature_cols).astype(float)
     
-    # No missing values here because all inputs are provided
-    new_data = new_data.astype(float)
     new_data[numeric_cols] = scaler.transform(new_data[numeric_cols])
-    
     prob = model.predict_proba(new_data)[0, 1]
     risk_score = prob * 100
     
@@ -555,11 +574,14 @@ if st.button("🔮 Predict Churn Risk (ML Model)", use_container_width=True):
         'Feature': feature_cols,
         'SHAP Value': shap_vals[0]
     }).sort_values('SHAP Value', key=abs, ascending=False)
-    fig_shap = px.bar(shap_df, x='SHAP Value', y='Feature', orientation='h',
-                      title='What drives this prediction (positive = higher risk)',
-                      color='SHAP Value', color_continuous_scale='RdBu')
+    fig_shap = px.bar(
+        shap_df, x='SHAP Value', y='Feature', orientation='h',
+        title='What drives this prediction (positive = higher risk)',
+        color='SHAP Value', color_continuous_scale='RdBu'
+    )
     st.plotly_chart(fig_shap, use_container_width=True)
 
+# Expanders
 with st.expander("📖 About This Project"):
     st.markdown("""
     **Smart HR Analytics Dashboard** uses Machine Learning to:
