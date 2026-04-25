@@ -1,7 +1,8 @@
+lightgbm
 scikit-learn
 pandas
 numpy
-flask
 matplotlib
 seaborn
 joblib
+streamlit
